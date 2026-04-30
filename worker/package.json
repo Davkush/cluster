@@ -1,0 +1,10 @@
+{
+  "name": "puzzle71-worker",
+  "version": "1.0.0",
+  "main": "worker.js",
+  "scripts": { "start": "node worker.js" },
+  "dependencies": {
+    "axios": "^1.6.7",
+    "uuid": "^9.0.0"
+  }
+}
