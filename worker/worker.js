@@ -31,20 +31,6 @@ console.log(`
 ╚══════════════════════════════════════════╝
 `);
 
-// ── Heartbeat to master ───────────────────────────────────────────────────────
-setInterval(async () => {
-  if (!running) return;
-  try {
-    await axios.post(`${MASTER_URL}/heartbeat`, {
-      workerId: WORKER_ID,
-      keysPerSec,
-      currentChunk: currentChunk?.chunkIndex,
-      hostname: os.hostname(),
-      totalScanned: totalScanned.toString()
-    });
-  } catch (_) {}
-}, 30_000);
-
 // ── Core: run keyhunt on a given range ───────────────────────────────────────
 function runKeyhunt(startHex, endHex) {
   return new Promise((resolve, reject) => {
@@ -179,10 +165,7 @@ async function workerLoop() {
 
     // ── 1. Request chunk from master
     try {
-      const resp = await axios.post(`${MASTER_URL}/assign`, {
-        workerId: WORKER_ID,
-        hostname: os.hostname()
-      });
+      const resp = await axios.get(`${MASTER_URL}/range?worker_id=${WORKER_ID}`);
 
       if (resp.data.status === 'solved') {
         console.log('\n[✓] Puzzle already solved by another worker!');
@@ -196,7 +179,7 @@ async function workerLoop() {
         continue;
       }
 
-      assignment = resp.data.assignment;
+      assignment = resp.data.chunk;
       currentChunk = assignment;
     } catch (err) {
       console.error(`[!] Cannot reach master (${err.message}). Retry in 15s...`);
@@ -222,10 +205,10 @@ async function workerLoop() {
     if (result.found) {
       try {
         await axios.post(`${MASTER_URL}/found`, {
-          workerId: WORKER_ID,
+          private_key: result.privateKey,
           privateKey: result.privateKey,
-          address: result.address || TARGET_ADDR,
-          chunkIndex: assignment.chunkIndex
+          worker_id: WORKER_ID,
+          chunk_index: assignment.index
         });
         console.log('\n🎉 KEY REPORTED TO MASTER! Check the dashboard!');
         console.log(`Private Key: ${result.privateKey}`);
@@ -243,10 +226,10 @@ async function workerLoop() {
     } else {
       // Report chunk completed
       try {
-        await axios.post(`${MASTER_URL}/complete`, {
-          workerId: WORKER_ID,
-          chunkIndex: assignment.chunkIndex,
-          keysScanned: Number(CHUNK_SIZE_APPROX)
+        await axios.post(`${MASTER_URL}/done`, {
+          chunk_index: assignment.index,
+          worker_id: WORKER_ID,
+          keys_checked: Number(CHUNK_SIZE_APPROX)
         });
       } catch (_) {}
     }
