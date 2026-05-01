@@ -38,8 +38,6 @@ function runKeyhunt(startHex, endHex) {
     const addrFile = path.join(WORK_DIR, 'target.txt');
     fs.writeFileSync(addrFile, TARGET_ADDR + '\n');
 
-    const stateFile = path.join(WORK_DIR, `state_${startHex.slice(0,8)}.dat`);
-
     const args = [
       '-m', 'bsgs',
       '-t', String(CORES),
@@ -48,10 +46,6 @@ function runKeyhunt(startHex, endHex) {
       '-k', '256',        // kangaroo factor
       '-b', '25',         // baby steps bit size
     ];
-
-    if (fs.existsSync(stateFile)) {
-      args.push('-s', stateFile);
-    }
 
     console.log(`[→] Starting keyhunt: 0x${startHex} → 0x${endHex}`);
     console.log(`[→] Command: keyhunt ${args.join(' ')}`);
@@ -187,7 +181,7 @@ async function workerLoop() {
       continue;
     }
 
-    console.log(`\n[✓] Got chunk #${assignment.chunkIndex}: 0x${assignment.start} → 0x${assignment.end}`);
+    console.log(`\n[✓] Got chunk #${assignment.index}: 0x${assignment.start} → 0x${assignment.end}`);
 
     // ── 2. Run search
     let result;
