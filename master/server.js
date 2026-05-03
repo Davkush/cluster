@@ -109,7 +109,7 @@ setInterval(recoverTimeouts, 5 * 60 * 1000); // every 5 min
 
 // GET /assign — worker requests a chunk
 app.post('/assign', async (req, res) => {
-  const { workerId, hostname } = req.body;
+  const { workerId, hostname, batchSize = 1 } = req.body;
 
   // Check if already solved
   const solved = await redis.get('puzzle71:solved');
@@ -219,6 +219,16 @@ app.get('/stats', async (req, res) => {
   const activeWorkers = workers.filter(w => w.alive);
   const totalKps = activeWorkers.reduce((s, w) => s + parseInt(w.keysPerSec || 0), 0);
 
+  // Calculate ETA
+  let etaText = 'Unknown';
+  if (totalKps > 0 && pending > 0) {
+    const remainingKeys = pending * BigInt(2 ** 40);
+    const etaSeconds = Number(remainingKeys) / totalKps;
+    const etaDays = Math.floor(etaSeconds / 86400);
+    const etaHours = Math.floor((etaSeconds % 86400) / 3600);
+    etaText = `${etaDays}d ${etaHours}h`;
+  }
+
   res.json({
     puzzle: PUZZLE.number,
     address: PUZZLE.address,
@@ -236,7 +246,8 @@ app.get('/stats', async (req, res) => {
       activeWorkers: activeWorkers.length,
       totalWorkers: workers.length,
       combinedKeysPerSec: totalKps,
-      combinedMKeysPerSec: (totalKps / 1e6).toFixed(2)
+      combinedMKeysPerSec: (totalKps / 1e6).toFixed(2),
+      estimatedTimeToCompletion: etaText
     },
     workers: workers.slice(0, 20)
   });
@@ -286,6 +297,7 @@ app.get('/', (req, res) => {
 <script>
 async function refresh() {
   try {
+      {label:'ETA', value: perf.estimatedTimeToCompletion, sub: 'to scan remaining chunks', cls:'highlight'},
     const r = await fetch('/stats');
     const d = await r.json();
     const p = d.progress;

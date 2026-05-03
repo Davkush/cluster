@@ -19,6 +19,7 @@ let currentChunk   = null;
 let keysPerSec     = 0;
 let totalScanned   = 0n;
 let running        = true;
+let lastHeartbeat  = 0;
 
 console.log(`
 ╔══════════════════════════════════════════╗
@@ -111,7 +112,20 @@ function runKeyhunt(startHex, endHex) {
   });
 }
 
-// ── Fallback: BitCrack CPU mode ───────────────────────────────────────────────
+// ── Heartbeat to master ─────────────────────────────────────────────────────
+async function sendHeartbeat() {
+  if (Date.now() - lastHeartbeat < 30000) return; // Throttle to 30s
+  try {
+    await axios.post(`${MASTER_URL}/heartbeat`, {
+      workerId: WORKER_ID,
+      keysPerSec,
+      currentKey: currentChunk ? `0x${currentChunk.start}` : ''
+    });
+    lastHeartbeat = Date.now();
+  } catch (err) {
+    // Silent fail
+  }
+}
 function runBitcrack(startHex, endHex) {
   return new Promise((resolve, reject) => {
     // Check bitcrack exists
@@ -155,11 +169,15 @@ function runBitcrack(startHex, endHex) {
 // ── Main worker loop ──────────────────────────────────────────────────────────
 async function workerLoop() {
   while (running) {
+    await sendHeartbeat(); // Send heartbeat periodically
     let assignment = null;
 
     // ── 1. Request chunk from master
     try {
-      const resp = await axios.get(`${MASTER_URL}/range?worker_id=${WORKER_ID}`);
+      const resp = await axios.post(`${MASTER_URL}/assign`, {
+        workerId: WORKER_ID,
+        hostname: os.hostname()
+      });
 
       if (resp.data.status === 'solved') {
         console.log('\n[✓] Puzzle already solved by another worker!');
@@ -173,7 +191,7 @@ async function workerLoop() {
         continue;
       }
 
-      assignment = resp.data.chunk;
+      assignment = resp.data.assignment;
       currentChunk = assignment;
     } catch (err) {
       console.error(`[!] Cannot reach master (${err.message}). Retry in 15s...`);
@@ -199,10 +217,10 @@ async function workerLoop() {
     if (result.found) {
       try {
         await axios.post(`${MASTER_URL}/found`, {
-          private_key: result.privateKey,
           privateKey: result.privateKey,
-          worker_id: WORKER_ID,
-          chunk_index: assignment.index
+          address: result.address,
+          workerId: WORKER_ID,
+          chunkIndex: assignment.chunkIndex
         });
         console.log('\n🎉 KEY REPORTED TO MASTER! Check the dashboard!');
         console.log(`Private Key: ${result.privateKey}`);
@@ -220,10 +238,10 @@ async function workerLoop() {
     } else {
       // Report chunk completed
       try {
-        await axios.post(`${MASTER_URL}/done`, {
-          chunk_index: assignment.index,
-          worker_id: WORKER_ID,
-          keys_checked: Number(CHUNK_SIZE_APPROX)
+        await axios.post(`${MASTER_URL}/complete`, {
+          chunkIndex: assignment.chunkIndex,
+          workerId: WORKER_ID,
+          keysScanned: Number(CHUNK_SIZE_APPROX)
         });
       } catch (_) {}
     }
