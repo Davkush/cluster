@@ -1,5 +1,15 @@
 const { execFile, spawn } = require('child_process');
 const axios = require('axios');
+const https = require('https');
+
+// Configure axios for connection reuse
+const axiosInstance = axios.create({
+  httpsAgent: new https.Agent({
+    keepAlive: true,
+    maxSockets: 10
+  }),
+  timeout: 30000
+});
 const { v4: uuidv4 } = require('uuid');
 const fs = require('fs');
 const os = require('os');
@@ -10,6 +20,7 @@ const MASTER_URL  = process.env.MASTER_URL || 'http://localhost:3000';
 const WORKER_ID   = process.env.WORKER_ID  || uuidv4();
 const TARGET_ADDR = '1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU';
 const CORES       = parseInt(process.env.CORES || os.cpus().length);
+const BATCH_SIZE   = parseInt(process.env.BATCH_SIZE || 1); // Process multiple chunks
 const WORK_DIR    = '/tmp/keyhunt-work';
 
 fs.mkdirSync(WORK_DIR, { recursive: true });
@@ -101,13 +112,21 @@ function runKeyhunt(startHex, endHex) {
       } else {
         // Non-zero exit — try BitCrack as fallback
         console.log(`[!] keyhunt exited with code ${code}, trying bitcrack fallback...`);
-        runBitcrack(startHex, endHex).then(resolve).catch(reject);
+        runBitcrack(startHex, endHex).then(resolve).catch(() => {
+          // Both tools failed - mark as failed so chunk gets reassigned
+          console.log('[!] Both keyhunt and bitcrack failed, chunk will be reassigned');
+          resolve({ failed: true });
+        });
       }
     });
 
     proc.on('error', (err) => {
       console.error('[!] keyhunt error:', err.message);
-      runBitcrack(startHex, endHex).then(resolve).catch(reject);
+      runBitcrack(startHex, endHex).then(resolve).catch(() => {
+        // Both tools failed - mark as failed so chunk gets reassigned
+        console.log('[!] Both keyhunt and bitcrack failed, chunk will be reassigned');
+        resolve({ failed: true });
+      });
     });
   });
 }
@@ -116,7 +135,7 @@ function runKeyhunt(startHex, endHex) {
 async function sendHeartbeat() {
   if (Date.now() - lastHeartbeat < 30000) return; // Throttle to 30s
   try {
-    await axios.post(`${MASTER_URL}/heartbeat`, {
+    await axiosInstance.post(`${MASTER_URL}/heartbeat`, {
       workerId: WORKER_ID,
       keysPerSec,
       currentKey: currentChunk ? `0x${currentChunk.start}` : ''
@@ -128,11 +147,26 @@ async function sendHeartbeat() {
 }
 function runBitcrack(startHex, endHex) {
   return new Promise((resolve, reject) => {
-    // Check bitcrack exists
-    const bitcrackBin = '/usr/local/bin/bitcrack';
-    if (!fs.existsSync(bitcrackBin)) {
-      console.log('[!] BitCrack not found, skipping chunk');
-      return resolve({ found: false });
+    // Check bitcrack exists - try multiple possible locations
+    const possiblePaths = [
+      '/usr/local/bin/bitcrack',
+      '/usr/local/bin/clKeySearch',
+      '/usr/local/bin/cuKeySearch',
+      '/opt/bitcrack/bin/clKeySearch',
+      '/opt/bitcrack/bin/cuKeySearch'
+    ];
+
+    let bitcrackBin = null;
+    for (const path of possiblePaths) {
+      if (fs.existsSync(path)) {
+        bitcrackBin = path;
+        break;
+      }
+    }
+
+    if (!bitcrackBin) {
+      console.log('[!] BitCrack not found in any expected location, skipping fallback');
+      return reject(new Error('BitCrack not found'));
     }
 
     const args = [
@@ -161,8 +195,14 @@ function runBitcrack(startHex, endHex) {
       }
     });
 
-    proc.on('close', () => resolve({ found: false }));
-    proc.on('error', () => resolve({ found: false }));
+    proc.on('close', (code) => {
+      if (code === 0) {
+        resolve({ found: false });
+      } else {
+        reject(new Error(`BitCrack exited with code ${code}`));
+      }
+    });
+    proc.on('error', (err) => reject(err));
   });
 }
 
@@ -174,7 +214,7 @@ async function workerLoop() {
 
     // ── 1. Request chunk from master
     try {
-      const resp = await axios.post(`${MASTER_URL}/assign`, {
+      const resp = await axiosInstance.post(`${MASTER_URL}/assign`, {
         workerId: WORKER_ID,
         hostname: os.hostname()
       });
@@ -207,7 +247,7 @@ async function workerLoop() {
       result = await runKeyhunt(assignment.start, assignment.end);
     } catch (err) {
       console.error('[!] Search error:', err.message);
-      result = { found: false };
+      result = { failed: true };
     }
 
     currentChunk = null;
@@ -216,7 +256,7 @@ async function workerLoop() {
     // ── 3. Report result
     if (result.found) {
       try {
-        await axios.post(`${MASTER_URL}/found`, {
+        await axiosInstance.post(`${MASTER_URL}/found`, {
           privateKey: result.privateKey,
           address: result.address,
           workerId: WORKER_ID,
@@ -235,10 +275,15 @@ async function workerLoop() {
       }
       running = false;
       process.exit(0);
+    } else if (result.failed) {
+      // Both tools failed - don't report completion, let chunk timeout and get reassigned
+      console.log('[!] Chunk processing failed, will be reassigned to another worker');
+      await sleep(5000); // Brief pause before requesting next chunk
+      continue;
     } else {
-      // Report chunk completed
+      // Report chunk completed (not found)
       try {
-        await axios.post(`${MASTER_URL}/complete`, {
+        await axiosInstance.post(`${MASTER_URL}/complete`, {
           chunkIndex: assignment.chunkIndex,
           workerId: WORKER_ID,
           keysScanned: Number(CHUNK_SIZE_APPROX)
