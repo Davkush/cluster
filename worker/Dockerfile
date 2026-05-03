@@ -21,8 +21,11 @@ RUN git clone https://github.com/albertobsd/keyhunt.git /opt/keyhunt \
 RUN git clone https://github.com/brichard19/BitCrack.git /opt/bitcrack \
     && cd /opt/bitcrack \
     && make BUILD_CUDA=0 \
+    && ls -la bin/ \
     && cp bin/clKeySearch /usr/local/bin/bitcrack 2>/dev/null || \
-       cp bin/cuKeySearch /usr/local/bin/bitcrack 2>/dev/null || true \
+       cp bin/cuKeySearch /usr/local/bin/bitcrack 2>/dev/null || \
+       echo "Warning: BitCrack binary not found in expected location" \
+    && chmod +x /usr/local/bin/bitcrack 2>/dev/null || true \
     && echo "[✓] BitCrack built (CPU mode)"
 
 # ── Worker orchestration script ───────────────────────────────────────────────

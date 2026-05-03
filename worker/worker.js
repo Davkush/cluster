@@ -147,11 +147,26 @@ async function sendHeartbeat() {
 }
 function runBitcrack(startHex, endHex) {
   return new Promise((resolve, reject) => {
-    // Check bitcrack exists
-    const bitcrackBin = '/usr/local/bin/bitcrack';
-    if (!fs.existsSync(bitcrackBin)) {
-      console.log('[!] BitCrack not found, skipping chunk');
-      return resolve({ found: false });
+    // Check bitcrack exists - try multiple possible locations
+    const possiblePaths = [
+      '/usr/local/bin/bitcrack',
+      '/usr/local/bin/clKeySearch',
+      '/usr/local/bin/cuKeySearch',
+      '/opt/bitcrack/bin/clKeySearch',
+      '/opt/bitcrack/bin/cuKeySearch'
+    ];
+
+    let bitcrackBin = null;
+    for (const path of possiblePaths) {
+      if (fs.existsSync(path)) {
+        bitcrackBin = path;
+        break;
+      }
+    }
+
+    if (!bitcrackBin) {
+      console.log('[!] BitCrack not found in any expected location, skipping fallback');
+      return reject(new Error('BitCrack not found'));
     }
 
     const args = [
