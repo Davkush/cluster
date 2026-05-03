@@ -112,13 +112,21 @@ function runKeyhunt(startHex, endHex) {
       } else {
         // Non-zero exit — try BitCrack as fallback
         console.log(`[!] keyhunt exited with code ${code}, trying bitcrack fallback...`);
-        runBitcrack(startHex, endHex).then(resolve).catch(reject);
+        runBitcrack(startHex, endHex).then(resolve).catch(() => {
+          // Both tools failed - mark as failed so chunk gets reassigned
+          console.log('[!] Both keyhunt and bitcrack failed, chunk will be reassigned');
+          resolve({ failed: true });
+        });
       }
     });
 
     proc.on('error', (err) => {
       console.error('[!] keyhunt error:', err.message);
-      runBitcrack(startHex, endHex).then(resolve).catch(reject);
+      runBitcrack(startHex, endHex).then(resolve).catch(() => {
+        // Both tools failed - mark as failed so chunk gets reassigned
+        console.log('[!] Both keyhunt and bitcrack failed, chunk will be reassigned');
+        resolve({ failed: true });
+      });
     });
   });
 }
@@ -172,8 +180,14 @@ function runBitcrack(startHex, endHex) {
       }
     });
 
-    proc.on('close', () => resolve({ found: false }));
-    proc.on('error', () => resolve({ found: false }));
+    proc.on('close', (code) => {
+      if (code === 0) {
+        resolve({ found: false });
+      } else {
+        reject(new Error(`BitCrack exited with code ${code}`));
+      }
+    });
+    proc.on('error', (err) => reject(err));
   });
 }
 
@@ -218,7 +232,7 @@ async function workerLoop() {
       result = await runKeyhunt(assignment.start, assignment.end);
     } catch (err) {
       console.error('[!] Search error:', err.message);
-      result = { found: false };
+      result = { failed: true };
     }
 
     currentChunk = null;
@@ -246,8 +260,13 @@ async function workerLoop() {
       }
       running = false;
       process.exit(0);
+    } else if (result.failed) {
+      // Both tools failed - don't report completion, let chunk timeout and get reassigned
+      console.log('[!] Chunk processing failed, will be reassigned to another worker');
+      await sleep(5000); // Brief pause before requesting next chunk
+      continue;
     } else {
-      // Report chunk completed
+      // Report chunk completed (not found)
       try {
         await axiosInstance.post(`${MASTER_URL}/complete`, {
           chunkIndex: assignment.chunkIndex,
