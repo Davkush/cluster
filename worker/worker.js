@@ -10,6 +10,7 @@ const MASTER_URL  = process.env.MASTER_URL || 'http://localhost:3000';
 const WORKER_ID   = process.env.WORKER_ID  || uuidv4();
 const TARGET_ADDR = '1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU';
 const CORES       = parseInt(process.env.CORES || os.cpus().length);
+const BATCH_SIZE   = parseInt(process.env.BATCH_SIZE || 1); // Process multiple chunks
 const WORK_DIR    = '/tmp/keyhunt-work';
 
 fs.mkdirSync(WORK_DIR, { recursive: true });
