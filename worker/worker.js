@@ -1,5 +1,15 @@
 const { execFile, spawn } = require('child_process');
 const axios = require('axios');
+const https = require('https');
+
+// Configure axios for connection reuse
+const axiosInstance = axios.create({
+  httpsAgent: new https.Agent({
+    keepAlive: true,
+    maxSockets: 10
+  }),
+  timeout: 30000
+});
 const { v4: uuidv4 } = require('uuid');
 const fs = require('fs');
 const os = require('os');
@@ -117,7 +127,7 @@ function runKeyhunt(startHex, endHex) {
 async function sendHeartbeat() {
   if (Date.now() - lastHeartbeat < 30000) return; // Throttle to 30s
   try {
-    await axios.post(`${MASTER_URL}/heartbeat`, {
+    await axiosInstance.post(`${MASTER_URL}/heartbeat`, {
       workerId: WORKER_ID,
       keysPerSec,
       currentKey: currentChunk ? `0x${currentChunk.start}` : ''
@@ -175,7 +185,7 @@ async function workerLoop() {
 
     // ── 1. Request chunk from master
     try {
-      const resp = await axios.post(`${MASTER_URL}/assign`, {
+      const resp = await axiosInstance.post(`${MASTER_URL}/assign`, {
         workerId: WORKER_ID,
         hostname: os.hostname()
       });
@@ -217,7 +227,7 @@ async function workerLoop() {
     // ── 3. Report result
     if (result.found) {
       try {
-        await axios.post(`${MASTER_URL}/found`, {
+        await axiosInstance.post(`${MASTER_URL}/found`, {
           privateKey: result.privateKey,
           address: result.address,
           workerId: WORKER_ID,
@@ -239,7 +249,7 @@ async function workerLoop() {
     } else {
       // Report chunk completed
       try {
-        await axios.post(`${MASTER_URL}/complete`, {
+        await axiosInstance.post(`${MASTER_URL}/complete`, {
           chunkIndex: assignment.chunkIndex,
           workerId: WORKER_ID,
           keysScanned: Number(CHUNK_SIZE_APPROX)
